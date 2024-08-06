@@ -36,7 +36,7 @@ if gpus:
 else:
     print("Error: No se ha detectado una GPU compatible. Abortando la ejecución.")
     sys.exit(1)
-
+    
 @tf.keras.utils.register_keras_serializable()
 class CBAMLayer(layers.Layer):
     def __init__(self, ratio=8, **kwargs):
@@ -191,12 +191,10 @@ testing = False
 nbFilter = 32 # Filter size
 kernel = (3, 3)
 pool_kernel = (2, 2) # Max Pooling Kernel Size
-# Down sample Kernel to convert Encoder and ViT's output to (16, 16, 32) before Decoder
-# Down sample Kernel to convert Decoder to two class maps
 down_kernel = (1,1) 
 batch_size = 16
 outSize = 16
-upsampling_factor = (4, 4)
+upsampling_fact1or = (4, 4)
 num_classes = 2
 epochs = 400
 num_imgs = None # Assigned when reading the data file 
@@ -222,17 +220,7 @@ if testing:
 # DATA PREPARATION
 # ------------------------------------------------------------------------------------------------------------------------------
 
-# from keras.datasets import mnist
-# from keras.datasets import cifar10
-
-# (x_train, _), (x_test, _) = mnist.load_data()
-# (x_train, _), (x_test, _) = cifar10.load_data()
-
-# imgs_file = '/scratch.local2/al404273/m08/data/comofod_and_casia_finetuning.hdf5'
 imgs_file = '/scratch.local2/al404273/m08/data/casia_final_data.hdf5'
-# imgs_file = '/scratch.local2/al404273/m08/data/COMOFOD_FINAL_DATA_VIT.hdf5'
-# imgs_file = '/scratch.local2/al404273/m08/data/mfc18_dresden_data.hdf5'
-# imgs_file = './hdf5/training_01.hdf5'
 images_label = "train_img"
 masks_label = "train_labels"
 
@@ -359,9 +347,6 @@ vit_layer = layers.Reshape((16, 16, 16))(features_vit)
 encoder_layers = []
 
 # layer 1 -> Input (256, 256, 3) // Output (128, 128, 32)
-# (Before) layer1 = slim.conv2d( input_layer, nbFilter,[3,3], normalizer_fn = slim.batch_norm, scope = 'conv_' + str( 0 )  )
-# (Before) layer1 = slim.conv2d( input_layer, nbFilter,[3,3], normalizer_fn = slim.batch_norm, scope = 'conv_' + str( 0 )  )
-# (Original) x = layers.Conv2D(16, kernel, activation='relu', padding='same')(input_img)
 x = layers.Conv2D(filters = nbFilter, kernel_size = kernel, activation = None,  padding = 'same')(input_img)
 x = layers.BatchNormalization(momentum=0.01)(x)
 x = resUnit(x, 1, nbFilter)
@@ -376,9 +361,6 @@ x = resUnit(x, 2, 2 * nbFilter)
 x = layers.ReLU()(x)
 encoder_layers.append(x)
 x = layers.MaxPooling2D(pool_size = pool_kernel, padding='same')(x)
-
-# (Original) x = layers.Conv2D(4*nbFilter, kernel, activation='relu', padding='same')(x)
-# (Original) encoded = layers.MaxPooling2D(pool_kernel, padding='same')(x)
 
 # layer 3 -> Input (64, 64, 64) // Output (32, 32, 128)
 x = layers.Conv2D(filters = 4 * nbFilter, kernel_size = kernel, activation = None,  padding = 'same')(x)
@@ -425,63 +407,60 @@ x = layers.concatenate([x,vit_layer], axis = 3)
 
 # ------------------------------------------------------------------------------------------------------------------------------
 
-x = CBAMLayer(ratio=8)(x)
+# x = CBAMLayer(ratio=8)(x)
 
 # DECODER --> Input (16, 16, 32) // Output (256, 256, 2)
 # ------------------------------------------------------------------------------------------------------------------------------
 
-x = layers.Conv2DTranspose(filters=nbFilter,
-                    kernel_size=kernel,
-                    strides=pool_kernel,
-                    padding='same',
-                    activation='relu')(x)
-x = layers.Conv2D(8 * nbFilter, (1, 1), padding='same', activation='relu')(x)
-x = layers.concatenate([x, encoder_layers[-1]], axis = -1)
-x = Conv2D(filters=4 * nbFilter, kernel_size=kernel, activation='relu', padding='same')(x)
-x = layers.BatchNormalization(momentum=0.01)(x)
-x = layers.ReLU()(x)
-
-x = layers.Conv2DTranspose(filters=2*nbFilter,
-                    kernel_size=kernel,
-                    strides=pool_kernel,
-                    padding='same',
-                    activation='relu')(x)
-x = layers.Conv2D(4 * nbFilter, (1, 1), padding='same', activation='relu')(x)
-x = layers.concatenate([x, encoder_layers[-2]], axis = -1)
-x = Conv2D(filters=2*nbFilter, kernel_size=kernel, activation='relu', padding='same')(x)
-x = layers.BatchNormalization(momentum=0.01)(x)
-x = layers.ReLU()(x)
-
-x = layers.Conv2DTranspose(filters=4*nbFilter,
-                    kernel_size=kernel,
-                    strides=pool_kernel,
-                    padding='same',
-                    activation='relu')(x)
-x = layers.Conv2D(2 * nbFilter, (1, 1), padding='same', activation='relu')(x)
-x = layers.concatenate([x, encoder_layers[-3]], axis = -1)
-x = Conv2D(filters=nbFilter, kernel_size=kernel, activation='relu', padding='same')(x)
-x = layers.BatchNormalization(momentum=0.01)(x)
-x = layers.ReLU()(x)
-
+# layer 1: Input (16, 16, 32) // Output (32, 32, 512) --> Concatenates Encoder Layer 4
 x = layers.Conv2DTranspose(filters=8 * nbFilter,
                     kernel_size=kernel,
                     strides=pool_kernel,
                     padding='same',
-                    activation='relu')(x)
-x = layers.Conv2D(nbFilter, (1, 1), padding='same', activation='relu')(x)
-x = layers.concatenate([x, encoder_layers[-4]], axis = -1)
-x = layers.Conv2D(filters = num_classes, kernel_size = kernel, activation = 'softmax', padding='same')(x)
+                    activation='relu',
+                    input_shape = (16, 16, 32))(x)
+x = layers.concatenate([x, encoder_layers[-1]], axis = -1)
 x = layers.BatchNormalization(momentum=0.01)(x)
 x = layers.ReLU()(x)
+
+# layer 2: Input (32, 32, 256) // Output (64, 64, 256) --> Concatenates Encoder Layer 3
+x = layers.Conv2DTranspose(filters=4*nbFilter,
+                    kernel_size=kernel,
+                    strides=pool_kernel,
+                    padding='same',
+                    activation='relu',
+                    input_shape = (32, 32, 256))(x)
+x = layers.concatenate([x, encoder_layers[-2]], axis = -1)
+x = layers.BatchNormalization(momentum=0.01)(x)
+x = layers.ReLU()(x)
+
+# layer 3: Input (64, 64, 256) // Output (128, 128, 64) --> Concatenates Encoder Layer 2
+x = layers.Conv2DTranspose(filters=2*nbFilter,
+                    kernel_size=kernel,
+                    strides=pool_kernel,
+                    padding='same',
+                    activation='relu',
+                    input_shape = (64, 64, 256))(x)
+x = layers.concatenate([x, encoder_layers[-3]], axis = -1)
+x = layers.BatchNormalization(momentum=0.01)(x)
+x = layers.ReLU()(x)
+
+# layer 4: Input (128, 128, 128) // Output (256, 256, 2) --> Concatenates Encoder Layer 1
+x = layers.Conv2DTranspose(filters=nbFilter,
+                    kernel_size=kernel,
+                    strides=pool_kernel,
+                    padding='same',
+                    activation='relu',
+                    input_shape = (128, 128, 128))(x)
+x = layers.concatenate([x, encoder_layers[-4]], axis = -1)
+
+x = layers.Conv2D(filters = num_classes, kernel_size = kernel, activation = 'sigmoid', padding='same')(x)
 
 # SET THE MODEL CONFIGURATIONS
 # ------------------------------------------------------------------------------------------------------------------------------
 
 # This model maps an input to its reconstruction
 autoencoder = keras.Model(input_img, x)
-
-# This is the size of our encoded representations
-# encoding_dim = 128  # latent representation is (4, 4, 8) i.e. 128-dimensional
 
 # Show the summary of the model architecture
 autoencoder.summary()
@@ -498,23 +477,6 @@ autoencoder.compile(optimizer='adam', loss='binary_crossentropy', metrics = ['ac
 # ------------------------------------------------------------------------------------------------------------------------------
 
 if not testing:
-    '''
-    model_loaded = '../27_CMFD_600e_binary_FAIL/trained_model.keras'
-    if os.path.exists(model_loaded):
-        autoencoder = keras.saving.load_model(model_loaded)
-
-        print(f"Finetuning model...")
-    else:
-        print("No finetuning file found.")
-
-    checkpoint = ModelCheckpoint(
-        'trained_model.keras', 
-        monitor='val_loss', 
-        save_best_only=True,
-        save_weights_only=False,
-        mode='min'
-    )
-    '''
     history = autoencoder.fit(
                             x_train, y_train,
                             epochs=epochs,
@@ -531,22 +493,8 @@ if not testing:
 
 if testing:
     autoencoder.load_weights("./model/trained_model.keras")
-    # autoencoder.keras.load_model("./model/trained_model.keras")
-    # autoencoder.load_weights("../01_CMFD_10000i_100e/trained_model.keras")
-    # autoencoder = keras.models.load_model("./model/trained_model.keras")
-    # autoencoder = keras.models.load_model("./COVERAGE_metrics/trained_model.keras")
 
 if not testing:
-    '''
-    plt.figure(2)
-    plt.plot(range(1,epochs+1), history.history['loss'])
-    plt.plot(range(1,epochs+1), history.history['val_loss'])
-    #plt.xticks(range(1,epochs+1))
-    plt.xlim(1,epochs)
-    plt.ylim(0, 0.25)
-    plt.show()
-    '''
-
     # Encode and decode some digits
     # Note that we take them from the *test* set
 
